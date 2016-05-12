@@ -96,6 +96,10 @@ C1 是已知的，因此我们的工作就是算出 I2 。
 
 根据前面的定义，C2 是密文的最后一个 block，C1 是密文的倒数第二个 block 。看下破解过程：
 
+![CBC](doc/diagram/cbcfake.png)
+
+(from [Rob Heaton's blog](http://robertheaton.com/2013/07/29/padding-oracle-attack/) )
+
 1. 先把 C1 替换成 [0]*16 （即16个0），把新的 C1 叫做 C1'
 1. 把 C1' + C2 传入 Padding Oracle，成功则跳到第 4 步，否则继续
 1. C1'[15] 自增（上限是 255），并重复第 2 步
