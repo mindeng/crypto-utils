@@ -24,21 +24,15 @@ def aes_encrypt(plaintext, password, key_length=32):
     # generate random salt
     salt = Random.new().read(bs)
 
-    # save salt
-    result = salt
-
     # derive key, iv
     key, iv = derive_key_and_iv(password, salt, key_length, bs)
 
     cipher = AES.new(key, AES.MODE_CBC, iv)
     chunk = plaintext
-    if len(chunk) % bs != 0:
-        padding_length = (bs - len(chunk) % bs) or bs
-        chunk += padding_length * chr(padding_length)
+    padding_length = (bs - len(chunk) % bs) or bs
+    chunk += padding_length * chr(padding_length)
 
-    result += cipher.encrypt(chunk)
-
-    return result
+    return cipher.encrypt(chunk), salt, iv
 
 def aes_decrypt(ciphertext, password, salt, key_length=32):
     if len(ciphertext) == 0:
@@ -51,10 +45,10 @@ def aes_decrypt(ciphertext, password, salt, key_length=32):
 
     cipher = AES.new(key, AES.MODE_CBC, iv)
     plaintext = cipher.decrypt(ciphertext)
-    padding_length = ord(plaintext[-1])
 
     check_paddings(plaintext)
 
+    padding_length = ord(plaintext[-1])
     return plaintext[:-padding_length]
 
 def check_paddings(s):
@@ -70,20 +64,47 @@ def check_paddings(s):
         i += 1
 
 
-def poa(ciphertext, padding_oracle):
+def poa(ciphertext, padding_oracle, iv=None):
     bs = AES.block_size
 
-    if len(ciphertext) < 2*bs:
+    if len(ciphertext) < bs or len(ciphertext) % bs != 0:
         print "Invalid ciphertext"
+        return
+
+    if len(ciphertext) == bs and iv is None:
+        print "Cannot crack the first block without IV!"
         return
 
     block_num = len(ciphertext) / bs
 
     # Crack the last block first
     target_block = ciphertext[(block_num-1)*bs:]
-    pre_block = ciphertext[(block_num-2)*bs:block_num*bs]
+    if block_num-1 == 0:
+        pre_block = iv
+    else:
+        pre_block = ciphertext[(block_num-2)*bs:block_num*bs]
+    plaintext = crack_block(target_block, pre_block)
+    check_paddings(plaintext)
+    padding = ord(plaintext[-1])
+    plaintext = plaintext[:-padding]
+
+    for i in xrange(block_num - 2, -1, -1):
+        target_block = ciphertext[i*bs:(i+1)*bs]
+        if i == 0:
+            pre_block = iv
+        else:
+            pre_block = ciphertext[(i-1)*bs:i*bs]
+        p = crack_block(target_block, pre_block)
+        plaintext = p + plaintext
+
+    return plaintext
+
+def crack_block(target_block, pre_block):
+    bs = AES.block_size
     plain_block = [0] * bs
     inter_block = [0] * bs
+
+    # Crack the last byte
     for i in xrange(0, 0xff+1):
         mock_block = struct.pack('16B', *([0]*15 + [i]))
         if padding_oracle(mock_block+target_block):
@@ -102,7 +123,7 @@ def poa(ciphertext, padding_oracle):
             plain_block[15] = P2
             break
 
-    # Crack remain bytes for the block
+    # Crack remain bytes
     for current_pos in xrange(14, -1, -1):
         padding_value = bs - current_pos
         mock_tail = [padding_value ^ I2 for I2 in inter_block[current_pos+1:]]
@@ -114,20 +135,13 @@ def poa(ciphertext, padding_oracle):
                 P2 = ord(pre_block[current_pos]) ^ I2
                 plain_block[current_pos] = P2
 
-    print plain_block
-    plaintext = ''.join([chr(v) for v in plain_block])
-
-    # Check paddings
-    check_paddings(plaintext)
-
-    padding = ord(plaintext[-1])
-    print plaintext[:-padding]
+    return ''.join([chr(v) for v in plain_block])
 
 if __name__ == '__main__':
     import argparse, os
 
     parser = argparse.ArgumentParser(description='Padding Oracle Attack Demo.')
-    parser.add_argument('--target', default='a'*30)
+    parser.add_argument('--target', default=('a'*16+'b'*16+'c'*16+'d'*4))
     parser.add_argument('-p', '--password', dest='password', default='PaddingOracleAttack')
     parser.add_argument('--key-len', type=int, default=32)
     parser.add_argument('-d', '--decrypt', dest='decrypt_flag', action='store_const', const=True, help='decrypt')
@@ -147,13 +161,8 @@ if __name__ == '__main__':
         else:
             print ret
     else:
-        ciphertext = aes_encrypt(target, password, key_length)
-        print len(ciphertext)
-        print aes_decrypt(ciphertext[16:], password, ciphertext[:16], key_length)
-
-
-    salt = ciphertext[:16]
-    ciphertext = ciphertext[16:]
+        ciphertext, salt, iv = aes_encrypt(target, password, key_length)
+        print aes_decrypt(ciphertext, password, salt, key_length)
 
     def padding_oracle(ciphertext):
         try:
@@ -162,5 +171,5 @@ if __name__ == '__main__':
         except PaddingError:
             return False
 
-    poa(ciphertext, padding_oracle)
+    print 'Cracked:', poa(ciphertext, padding_oracle, iv)
 
