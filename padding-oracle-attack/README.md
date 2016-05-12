@@ -19,7 +19,7 @@ def pkcs7padding(plaintext):
 ### Padding Oracle
 指被攻击对象暴露的一个接口，该接口可以通过任意形式提供，例如可能是命令行，可能是API，也可能是 REST 接口等等。形式不重要，重要的是内容，该接口可以输入密文，返回该段密文解密后的 Padding 是否正确。如果解密相关的应用开发者不小心，很有可能会暴露出该类接口（例如在提供 web 服务时，后端解密代码未对 Padding 异常情况进行捕捉，导致 HTTP 500 错误）。
 
-Padding Oracle Attack 就是利用 Padding Oracle 来进行攻击的，简单来说，攻击者首先需要窃取一段密文，其次要有一个 Padding Oracle 可供利用，然后攻击者便可通过重复修改密文并发送到 Padding Oracle 的方式，来对这段密文进行破解。
+Padding Oracle Attack 就是利用 Padding Oracle 来进行攻击的，简单来说，攻击者首先需要窃取一段密文，其次要有一个 Padding Oracle 可供利用，然后攻击者便可通过不断篡改密文并发送到 Padding Oracle 进行验证的方式，来对这段密文进行破解。
 
 ### XOR（异或）
 在解释下一个概念之前，先让我们稍微复习下 XOR（异或）操作。下面是 XOR 的一些基本公式：
@@ -49,7 +49,13 @@ Padding Oracle Attack 就是利用 Padding Oracle 来进行攻击的，简单来
 
 #### 解密过程
 
-类似的，在解密过程中，有一个 "block cipher decryption"，这个东东接受『密文块』作为输入，但输出不是明文，是一个中间结果。结合上面加密的过程，我们不难理解，这个中间结果就是明文在和 previous cipher block 异或之后的结果。拿到这个中间结果后，跟进前面异或公式的最后一条可知，只需将该中间结果和 previous cipher block 再做一次异或，即可得到最初的明文块。至此，该 block 解密结束。如果是第一个 cipher block，则将中间结果和 IV 进行一次异或即可得到明文块。当然，如果是最后一个 block，还需要根据 PKCS7Padding 的规则将尾部 Padding 剔除，剔除 Padding 的 Python 实现代码如下：
+类似的，在解密过程中，有一个 "block cipher decryption"，这个东东接受『密文块』作为输入，但输出不是明文，是一个中间结果。结合上面加密的过程，我们不难理解，这个中间结果就是明文在和 previous cipher block 异或之后的结果。拿到这个中间结果后，跟进前面异或公式的最后一条可知，只需将该中间结果和 previous cipher block 再做一次异或，即可得到最初的明文块。至此，该 block 解密结束。如果是第一个 cipher block，则将中间结果和 IV 进行一次异或即可得到明文块。
+
+![CBC](doc/diagram/cbc2.png)
+
+(from [Rob Heaton's blog](http://robertheaton.com/2013/07/29/padding-oracle-attack/) )
+
+当然，如果是最后一个 block，还需要根据 PKCS7Padding 的规则将尾部 Padding 剔除，剔除 Padding 的 Python 实现代码如下：
 
 ```python
 def pkcs7unpadding(plaintext):
@@ -59,7 +65,79 @@ def pkcs7unpadding(plaintext):
     return plaintext[:-padding_len]
 ```
 
-![CBC](doc/diagram/cbc2.png)
+### 攻击过程
+有了上述这些概念，攻击过程就比较好理解了。
 
-(from [Rob Heaton's blog](http://robertheaton.com/2013/07/29/padding-oracle-attack/) )
+攻击者就是通过计算上面提到的『中间结果』来达到解密目的的。怎么计算『中间结果』呢？答案是试！利用 Padding Oracle 来试。
 
+首先，明确几个概念：
+
+* 我们窃取了一段密文
+* 我们是一块一块来破解的（因为 CBC 是一块一块加密的）
+* 我们有一个 Padding Oracle
+
+为了描述方便起见，这里定义几个缩写（可结合下面的图片来理解）：
+
+* C1: 待破解密文块相邻的前面的密文块
+* C2: 待破解密文块
+* I2: 待破解密文块经过 "block cipher decryption" 解密出来的中间结果，可与 C1 异或后得到明文块
+* P2: 待破解密文块解密后的明文块
+
+因此我们有如下公式：
+
+```
+P2 = C1 ^ I2
+```
+
+C1 是已知的，因此我们的工作就是算出 I2 。
+
+#### 破解最后一个字节
+首先，我们从破解最后一个 block 的最后一个字节开始。
+
+根据前面的定义，C2 是密文的最后一个 block，C1 是密文的倒数第二个 block 。看下破解过程：
+
+1. 先把 C1 替换成 [0]*16 （即16个0），把新的 C1 叫做 C1'
+1. 把 C1' + C2 传入 Padding Oracle，成功则跳到第 4 步，否则继续
+1. C1'[15] 自增（上限是 255），并重复第 2 步
+1. 由于 C1' + C2 通过了 Padding 检查，我们认为 P2'[15] 一定是 1~16 中的一个值，可通过继续修改 C1' 来进一步确定 P2'[15] 的值（即 Padding 值）。这里先不介绍如何确定 P2'[15] 的值，后面再详细介绍。按照如下公式计算出 I2[15]
+
+```
+I2     = C1'     ^ P2'
+I2[15] = C1'[15] ^ P2'[15]
+
+```
+
+进一步，因为 C1 是已知的，所以:
+
+```
+P2[15] = C1[15] ^ I2[15]
+```
+至此，P2[15] 已经计算出来了，即最后一个字节已经被破解了！
+
+#### 破解最后一个 block 的剩余字节
+为了破解剩余字节，我们先可以把 P2'[15] 定位 2，根据 PKCS7Padding 的定义，如果 padding 是合法的，则 P2'[14] 也一定是 2。我们就根据这个思路来破解倒数第二个字节。
+
+1. 先把 C1'[0..14] 置 0，C1'[15] 设置成 `2 ^ I2[15]` （确保 P2'[15] 是 2）
+1. C1' + C2 传入 Padding Oracle，测试成功则跳到第 4 步，否则继续下一步
+1. C1'[14] 自增，重复第 2 步
+1. 根据以下公式计算 I2[15]:
+
+```
+I2     = C1'     ^ P2'
+I2[14] = C1'[14] ^ P2'[14]
+       = C1'[14] ^ 2
+```
+
+由于 C1 是已知的，所以：
+
+```
+P2[14] = C1[14] ^ I2[14]
+```
+至此，P2[14] 计算出来了，即倒数第二个字节被破解了！
+
+重复上述步骤，即可破解最后一个 block 的剩余字节。
+
+重复上面两节的步骤，即可破解所有 block。第一个 block 稍有不同，因为第一个 block 没有对应的 C1，此时， C1 = IV 。
+
+#### 确定最后一个字节的值
+我们回过头来看这个问题。
