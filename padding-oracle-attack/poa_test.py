@@ -26,6 +26,7 @@ def aes_encrypt(plaintext, password, key_length=32):
 
     # derive key, iv
     key, iv = derive_key_and_iv(password, salt, key_length, bs)
+    #iv = chr(0)*16
 
     cipher = AES.new(key, AES.MODE_CBC, iv)
     chunk = plaintext
@@ -42,9 +43,11 @@ def aes_decrypt(ciphertext, password, salt, key_length=32):
 
     # derive key, iv
     key, iv = derive_key_and_iv(password, salt, key_length, bs)
+    #iv = chr(0)*16
 
     cipher = AES.new(key, AES.MODE_CBC, iv)
     plaintext = cipher.decrypt(ciphertext)
+    #print "plain:", [ord(c) for c in plaintext]
 
     check_paddings(plaintext)
 
@@ -112,6 +115,7 @@ def crack_block(target_block, pre_block):
             padding_value = 1
             for next_padding_value in xrange(2, bs+1):
                 mock_block = struct.pack('16B', *([0]*(bs-next_padding_value) + [1] + [0]*(next_padding_value-2) + [i]))
+                #print 'mock:', [ord(c) for c in mock_block]
                 if padding_oracle(mock_block+target_block):
                     break
                 padding_value = next_padding_value
