@@ -163,7 +163,7 @@ P2'[14] == P2'[15] == 2
 1. 根据 PKCS7Padding 的定义，可确定 P2'[15] 的值为 16，结束
 
 ## 程序实现
-作为学习和实践，这里使用 Python 语言实现了一个 Padding Oracle Attack 的 Demo，见 poa_test.py 。
+作为练习和测试，这里用 Python 语言实现了一个 Padding Oracle Attack 的 Demo，见 poa_test.py 。
 
 ## 参考
 
