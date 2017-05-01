@@ -47,7 +47,8 @@ def encrypt_file(in_file, out_file, password, key_length=32):
             finished = True
         out_file.write(cipher.encrypt(chunk))
 
-def decrypt_file(in_file, out_file, password, check_magic=False):
+# key_length only used in compatible mode
+def decrypt_file(in_file, out_file, password, check_magic=False, compatible=False, key_length=32):
     bs = AES.block_size
 
     # read version info
@@ -66,9 +67,12 @@ def decrypt_file(in_file, out_file, password, check_magic=False):
         ver = 1
 
     # read key len
-    key_length = struct.unpack('!B', in_file.read(struct.calcsize('B')))[0]
-    if key_length % 16 != 0:
-        return False
+    if compatible:
+        salt = salt[8:]
+    else:
+        key_length = struct.unpack('!B', in_file.read(struct.calcsize('B')))[0]
+        if key_length % 16 != 0:
+            return False
 
     # derive key, iv
     key, iv = derive_key_and_iv(password, salt, key_length, bs)
@@ -134,6 +138,9 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--string', dest='do_string', action='store_const', const=True, help='encrypt/decrypt string')
     parser.add_argument('--check-magic', action='store_const', const=True, help='check magic number')
 
+    # compatible with old version (aes-tool.py in mac-tools)
+    parser.add_argument('--compatible', action='store_const', const=True, help='compatible with old version')
+
     args = parser.parse_args()
     #print args
 
@@ -170,7 +177,7 @@ if __name__ == '__main__':
     def do_file():
         with open(src, 'rb') as in_file, open(dst, 'wb') as out_file:
             if decrypt_flag:
-                ret = decrypt_file(in_file, out_file, password, args.check_magic)
+                ret = decrypt_file(in_file, out_file, password, args.check_magic, args.compatible, key_length)
                 if not ret:
                     print 'Decrpt failed!'
             else:
